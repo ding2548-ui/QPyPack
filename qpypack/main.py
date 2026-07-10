@@ -813,6 +813,7 @@ class SettingsPanel(QWidget):
             self.reqs_check.setChecked(s.getboolean('use_reqs', True))
             self.pipreqs_check.setChecked(s.getboolean('use_pipreqs', True))
             self.reqs_file_edit.setText(s.get('use_reqs_file', ''))
+            self.qt_plugins_edit.setText(s.get('qt_plugins_dir', ''))
             
             if self.upx_check:
                 self.upx_check.setChecked(s.getboolean('upx', False))
@@ -856,6 +857,7 @@ class SettingsPanel(QWidget):
         s['use_reqs'] = str(self.reqs_check.isChecked())
         s['use_pipreqs'] = str(self.pipreqs_check.isChecked())
         s['use_reqs_file'] = self.reqs_file_edit.text().strip()
+        s['qt_plugins_dir'] = self.qt_plugins_edit.text().strip()
         if self.upx_check:
             s['upx'] = str(self.upx_check.isChecked())
         s['upx_path'] = self.upx_path_edit.text().strip()
@@ -1010,6 +1012,18 @@ class SettingsPanel(QWidget):
         h_hid.addWidget(self.hidden_edit)
         h_hid.addWidget(btn_scan)
         form_dep.addRow("隐式依赖:", h_hid)
+        
+        # 新增：Qt插件目录配置（支持PyQt5/PyQt6/PySide2/PySide6）
+        self.qt_plugins_edit = QLineEdit()
+        self.qt_plugins_edit.setPlaceholderText("留空则自动检测，或手动指定如: D:\\venv\\Lib\\site-packages\\PyQt5\\Qt5\\plugins")
+        btn_browse_qt = QPushButton("浏览...")
+        btn_browse_qt.setProperty("class", "ToolBtn")
+        btn_browse_qt.clicked.connect(self.browse_qt_plugins)
+        h_qt = QHBoxLayout()
+        h_qt.addWidget(self.qt_plugins_edit)
+        h_qt.addWidget(btn_browse_qt)
+        form_dep.addRow("Qt插件目录:", h_qt)
+        
         dep_lay.addLayout(form_dep)
         lay.addWidget(grp_dep)
         
@@ -1223,6 +1237,11 @@ class SettingsPanel(QWidget):
         f, _ = QFileDialog.getOpenFileName(self, "选择依赖清单文件", "", "Requirements Files (*.txt);;All Files (*)")
         if f:
             self.reqs_file_edit.setText(Path(f).resolve().as_posix())
+
+    def browse_qt_plugins(self):
+        d = QFileDialog.getExistingDirectory(self, "选择Qt插件目录 (plugins)")
+        if d:
+            self.qt_plugins_edit.setText(Path(d).resolve().as_posix())
 
     def update_icon_preview(self, path):
         if path and Path(path).exists():
@@ -1702,14 +1721,59 @@ class PackingThread(QThread):
                     
                 cmd.append("--enable-plugin=anti-bloat")
                 
-                if 'PyQt5' in script_imports: cmd.append("--enable-plugin=pyqt5")
-                elif 'PyQt6' in script_imports: cmd.append("--enable-plugin=pyqt6")
-                elif 'PySide2' in script_imports: cmd.append("--enable-plugin=pyside2")
-                elif 'PySide6' in script_imports: cmd.append("--enable-plugin=pyside6")
+                # 合并AST检测和用户手动输入的隐式依赖
+                hidden_imports_set = {m.strip().split('.')[0] for m in self.params.get('hidden_imports', '').split(',') if m.strip()}
+                all_imports = script_imports | hidden_imports_set
                 
-                if 'numpy' in script_imports: cmd.append("--enable-plugin=numpy")
-                if 'matplotlib' in script_imports: cmd.append("--enable-plugin=matplotlib")
-                if 'tkinter' in script_imports: cmd.append("--enable-plugin=tk-inter")
+                # 检测Qt框架并自动包含plugins目录
+                qt_framework = None
+                qt_plugin_name = None
+                qt_subdir = None
+                
+                if 'PyQt5' in all_imports:
+                    qt_framework = 'PyQt5'
+                    qt_plugin_name = 'pyqt5'
+                    qt_subdir = 'Qt5'
+                elif 'PyQt6' in all_imports:
+                    qt_framework = 'PyQt6'
+                    qt_plugin_name = 'pyqt6'
+                    qt_subdir = 'Qt6'
+                elif 'PySide2' in all_imports:
+                    qt_framework = 'PySide2'
+                    qt_plugin_name = 'pyside2'
+                    qt_subdir = 'Qt'
+                elif 'PySide6' in all_imports:
+                    qt_framework = 'PySide6'
+                    qt_plugin_name = 'pyside6'
+                    qt_subdir = 'Qt6'
+                
+                if qt_framework:
+                    cmd.append(f"--enable-plugin={qt_plugin_name}")
+                    
+                    # 优先使用用户手动指定的Qt插件目录
+                    manual_qt_plugins = self.params.get('qt_plugins_dir', '').strip()
+                    if manual_qt_plugins and Path(manual_qt_plugins).exists():
+                        cmd.append(f"--include-data-dir={Path(manual_qt_plugins).resolve().as_posix()}={qt_framework}/{qt_subdir}/plugins")
+                    else:
+                        # 自动查找并包含Qt plugins目录
+                        try:
+                            import importlib.util
+                            qt_spec = importlib.util.find_spec(qt_framework)
+                            if qt_spec and qt_spec.origin:
+                                qt_dir = Path(qt_spec.origin).parent
+                                plugins_dir = qt_dir / qt_subdir / "plugins"
+                                if plugins_dir.exists():
+                                    cmd.append(f"--include-data-dir={plugins_dir.resolve().as_posix()}={qt_framework}/{qt_subdir}/plugins")
+                                # PyQt6/PySide6的plugins可能在不同位置
+                                plugins_dir2 = qt_dir / "Qt" / "plugins"
+                                if not plugins_dir.exists() and plugins_dir2.exists():
+                                    cmd.append(f"--include-data-dir={plugins_dir2.resolve().as_posix()}={qt_framework}/Qt/plugins")
+                        except Exception:
+                            pass
+                
+                if 'numpy' in all_imports: cmd.append("--enable-plugin=numpy")
+                if 'matplotlib' in all_imports: cmd.append("--enable-plugin=matplotlib")
+                if 'tkinter' in all_imports: cmd.append("--enable-plugin=tk-inter")
                 
                 for imp in self.params.get('hidden_imports', '').split(','):
                     if imp.strip(): cmd.append(f"--include-module={imp.strip()}")
