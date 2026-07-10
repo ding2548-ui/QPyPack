@@ -31,7 +31,7 @@ from PySide6.QtGui import QFont, QDragEnterEvent, QDropEvent, QTextCursor, QIcon
 from PySide6.QtSvg import QSvgRenderer
 
 __app_name__ = "QPyPack"
-__version__ = "2.4.6"
+__version__ = "2.4.5"
 __author__ = "QwejayHuang"
 __company__ = "QwejayHuang"
 __description__ = "自动化 Python 脚本打包构建工具"
@@ -2231,7 +2231,8 @@ class MainWindow(QMainWindow):
             'ver_ver': sp.ver_ver.text(),
             'pip_index_url': sp.pip_source_edit.text().strip(),
             'concise_log': sp.concise_log_check.isChecked(),
-            'auto_save_log': sp.auto_save_log_check.isChecked()
+            'auto_save_log': sp.auto_save_log_check.isChecked(),
+            'qt_plugins_dir': sp.qt_plugins_edit.text().strip()
         }
 
         self.log.clear()
